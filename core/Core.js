@@ -232,3 +232,15 @@ AjaxSolr.extend = function () {
   }
   return target;
 };
+
+AjaxSolr.parseStringList = function(sl) {
+  var regex = /("[^"]*"|[^ ]*)?(.*)/;
+  var vals = [];
+  var ar;
+  do {
+    ar = regex.exec(sl.trim());
+    vals.push(ar[1]);
+    sl = ar[2];
+  } while(sl.trim());
+  return vals;
+};

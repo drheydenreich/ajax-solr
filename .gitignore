@@ -1,1 +1,4 @@
 ajax-solr.min.js
+/.settings
+/.project
+/ajax-solr.js

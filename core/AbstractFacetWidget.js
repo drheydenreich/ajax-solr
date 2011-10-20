@@ -27,6 +27,28 @@ AjaxSolr.AbstractFacetWidget = AjaxSolr.AbstractWidget.extend(
    * @default true
    */
   multivalue: true,
+  
+  /**
+   * Set to <tt>true</tt> to have a facet query that returns a union (or).
+   */
+  union : false,
+  
+  /**
+   * Set a tag for the fq parameter like fq={!tag=mytag}field.
+   */
+  tag : null,
+
+  /**
+   * Set to change the key i.e. facet.query={!key=today
+   * ex=dateFacet}dates:[NOW/DAY TO *]
+   */
+  key : null,
+
+  /**
+   * Set a local exclude for the facet.field i.e.
+   * facet.field={!ex=mytag}field
+   */
+  ex : null,
 
   init: function () {
     this.initStore();
@@ -36,6 +58,8 @@ AjaxSolr.AbstractFacetWidget = AjaxSolr.AbstractWidget.extend(
    * Add facet parameters to the parameter store.
    */
   initStore: function () {
+    var param;
+    
     /* http://wiki.apache.org/solr/SimpleFacetParameters */
     var parameters = [
       'facet.prefix',
@@ -53,10 +77,10 @@ AjaxSolr.AbstractFacetWidget = AjaxSolr.AbstractWidget.extend(
     // Set facet.field, facet.date or facet.range to truthy values to add
     // related per-field parameters to the parameter store.
     if (this['facet.field'] !== undefined) {
-      this.manager.store.addByValue('facet.field', this.field);
+      param = this.manager.store.addByValue('facet.field', this.field);
     }
     else if (this['facet.date'] !== undefined) {
-      this.manager.store.addByValue('facet.date', this.field);
+      param = this.manager.store.addByValue('facet.date', this.field);
       parameters = parameters.concat([
         'facet.date.start',
         'facet.date.end',
@@ -67,7 +91,7 @@ AjaxSolr.AbstractFacetWidget = AjaxSolr.AbstractWidget.extend(
       ]);
     }
     else if (this['facet.range'] !== undefined) {
-      this.manager.store.addByValue('facet.range', this.field);
+      param = this.manager.store.addByValue('facet.range', this.field);
       parameters = parameters.concat([
         'facet.range.start',
         'facet.range.end',
@@ -76,6 +100,15 @@ AjaxSolr.AbstractFacetWidget = AjaxSolr.AbstractWidget.extend(
         'facet.range.other',
         'facet.range.include'
       ]);
+    }
+    
+    if (param) {
+      if (this.key) {
+        param.local("key", this.key);
+      }
+      if (this.ex) {
+        param.local("ex", this.ex);
+      }
     }
 
     for (var i = 0, l = parameters.length; i < l; i++) {
@@ -102,6 +135,9 @@ AjaxSolr.AbstractFacetWidget = AjaxSolr.AbstractWidget.extend(
     return this.changeSelection(function () {
       var a = this.manager.store.removeByValue('fq', new RegExp('^-?' + this.field + ':')),
           b = this.manager.store.addByValue('fq', this.fq(value));
+      if (b && this.tag) {
+        b.local("tag", this.tag);
+      }
       return a || b;
     });
   },
@@ -113,7 +149,42 @@ AjaxSolr.AbstractFacetWidget = AjaxSolr.AbstractWidget.extend(
    */
   add: function (value) {
     return this.changeSelection(function () {
-      return this.manager.store.addByValue('fq', this.fq(value));
+      var param = this.manager.store.addByValue('fq', this.fq(value));
+      if (param && this.tag) {
+        param.local("tag", this.tag);
+      }
+      return param;
+    });
+  },
+  
+  /**
+   * Append to the filter query.
+   * 
+   * @returns {Boolean} Whether the selection changed.
+   */
+  append : function(value) {
+    return this.changeSelection(function() {
+      var params, param, vals;
+      value = AjaxSolr.Parameter.escapeValue(value);
+      params = this.getParams();
+      if (params) {
+        vals = this.getQueryValues(params);
+        param = params[0];
+        if (AjaxSolr.inArray(value, vals) < 0) {
+          vals.push(value);
+          param.val(this.fq('(' + vals.join(" ") + ')'));
+          return true;
+        }
+      } else {
+        param = this.manager.store.addByValue('fq', this.fq('(' + value
+            + ')'));
+        if (param && this.tag) {
+          param.local("tag", this.tag);
+        }
+        return true;
+      }
+
+      return false;
     });
   },
 
@@ -124,6 +195,23 @@ AjaxSolr.AbstractFacetWidget = AjaxSolr.AbstractWidget.extend(
    */
   remove: function (value) {
     return this.changeSelection(function () {
+      if (this.multivalue && this.union) {
+        var params, param, vals;
+        value = AjaxSolr.Parameter.escapeValue(value);
+        params = this.getParams();
+        if (params) {
+          vals = this.getQueryValues(params).filter(function(elmt, idx) {
+            return elmt != value;
+          });
+          if (vals.length > 0) {
+            params[0].val(this.fq('(' + vals.join(" ") + ')'));
+            return true;
+          } else {
+            return this.manager.store.removeByValue('fq', this.fq('('
+                + value + ')'));
+          }
+        }
+      }
       return this.manager.store.removeByValue('fq', this.fq(value));
     });
   },
@@ -251,7 +339,7 @@ AjaxSolr.AbstractFacetWidget = AjaxSolr.AbstractWidget.extend(
    *   filter query with the given value.
    */
   clickHandler: function (value) {
-    var self = this, meth = this.multivalue ? 'add' : 'set';
+    var self = this, meth = this.multivalue ? (this.union ? 'append' : 'add') : 'set';
     return function () {
       if (self[meth].call(self, value)) {
         self.manager.doRequest(0);
@@ -282,5 +370,56 @@ AjaxSolr.AbstractFacetWidget = AjaxSolr.AbstractWidget.extend(
    */
   fq: function (value, exclude) {
     return (exclude ? '-' : '') + this.field + ':' + AjaxSolr.Parameter.escapeValue(value);
+  },
+  
+  /**
+   * Retrieve all fq parameters of this widget
+   * 
+   * @returns
+   */
+  getParams : function() {
+    var a = this.manager.store.find('fq', new RegExp('^-?' + this.field
+        + ':'));
+    var params = [];
+    for ( var i in a) {
+      params.push(this.manager.store.params.fq[a[i]]);
+    }
+    return params.length == 0 ? false : params;
+  },
+
+  /**
+   * Return an array of the selected facet values.
+   * 
+   * @param params
+   * @returns {Array}
+   */
+  getQueryValues : function(params) {
+    var param, q, i;
+    var values = [];
+    if (params) {
+      for (i in params) {
+        param = params[i];
+        q = (this.union ? new RegExp('^-?' + this.field + ':\\((.*)\\)')
+            : new RegExp('^-?' + this.field + ':(.*)')).exec(param.val())[1];
+        if (this.union) {
+          values = AjaxSolr.parseStringList(q).slice();
+        } else {
+          values.push(q);
+        }
+      }
+    }
+    return values;
+  },
+
+  /**
+   * Return the position of the given value in the array of selected facet
+   * values. -1 if not selected.
+   * 
+   * @param value
+   * @returns
+   */
+  inQuery : function(value) {
+    return AjaxSolr.inArray(AjaxSolr.Parameter.escapeValue(value), this
+        .getQueryValues(this.getParams()));
   }
 });

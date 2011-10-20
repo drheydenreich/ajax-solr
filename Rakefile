@@ -4,7 +4,7 @@ require 'yui/compressor'
 desc 'Aggregate all javascript files'
 task :aggregate, :compress do |t, args|
   args.with_defaults(:compress => false)
-  output_file = ENV['output'] || 'ajax-solr.min.js'
+  output_file = ENV['output'] || (args[:compress] ? 'ajax-solr.min.js' : 'ajax-solr.js')
 
   core = [
     'Core',
